@@ -14,7 +14,7 @@ const app = express();
 
 // Middleware
 app.use(cors({
-    origin: ['http://localhost:5173', 'http://localhost:5174', process.env.FRONTEND_URL].filter(Boolean),
+    origin: ['http://localhost:5173', 'http://localhost:5174', process.env.FRONTEND_URL, 'https://techzdada.in', 'https://www.techzdada.in'].filter(Boolean),
     credentials: true
 }));
 app.use(express.json());
@@ -39,6 +39,12 @@ app.use((err, req, res, next) => {
 
 const PORT = process.env.PORT || 5000;
 
-app.listen(PORT, () => {
-    console.log(`🚀 CPC User Backend running on port ${PORT}`);
-});
+// Only listen locally, Vercel will handle requests via the exported app
+if (process.env.NODE_ENV !== 'production') {
+    app.listen(PORT, () => {
+        console.log(`🚀 CPC User Backend running on port ${PORT}`);
+    });
+}
+
+// Export for Vercel Serverless
+module.exports = app;
