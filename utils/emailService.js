@@ -84,4 +84,47 @@ const sendResetOtpEmail = async (to, otp) => {
     await transporter.sendMail(mailOptions);
 };
 
-module.exports = { sendOtpEmail, sendResetOtpEmail };
+/**
+ * Send Purchase Success receipt
+ * @param {string} to - recipient email
+ * @param {string} resourceName - name of the resource
+ * @param {number} amount - total amount paid
+ * @param {string} orderId - exact razorpay order string
+ */
+const sendPurchaseEmail = async (to, resourceName, amount, orderId) => {
+    const mailOptions = {
+        from: `"College Pe Charcha Premium" <${process.env.EMAIL_USER}>`,
+        to,
+        subject: '🎉 Payment Successful - Access Your Premium Resource!',
+        html: `
+            <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 480px; margin: 0 auto; background: #FFFBF2; border-radius: 16px; overflow: hidden; border: 1px solid #fed7aa;">
+                <div style="background: linear-gradient(135deg, #f68014, #ea580c); padding: 32px 24px; text-align: center;">
+                    <h1 style="color: white; margin: 0; font-size: 24px; font-weight: 800;">College Pe Charcha</h1>
+                    <p style="color: rgba(255,255,255,0.9); margin: 8px 0 0; font-size: 14px;">Purchase Receipt</p>
+                </div>
+                <div style="padding: 32px 24px; text-align: center;">
+                    <h2 style="color: #1f2937; margin: 0 0 8px; font-size: 20px;">Thank you for your purchase!</h2>
+            <p style="color: #6b7280; margin: 0 0 24px; font-size: 14px; line-height: 1.5;">
+                        We have successfully safely received your payment of <strong style="color: #10b981;">₹${amount}</strong>. 
+                    </p>
+                    <div style="background: white; border: 1px solid #f68014; border-radius: 12px; padding: 20px; margin: 0 auto; display: inline-block; text-align: left; width: 80%;">
+                        <p style="margin: 0 0 8px; font-size: 14px; color: #4b5563;"><strong>Resource:</strong> ${resourceName}</p>
+                        <p style="margin: 0 0 8px; font-size: 14px; color: #4b5563;"><strong>Payment ID:</strong> ${orderId}</p>
+                        <p style="margin: 0; font-size: 14px; color: #4b5563;"><strong>Paid Amount:</strong> ₹${amount}</p>
+                    </div>
+                    <p style="color: #9ca3af; margin: 24px 0 24px; font-size: 14px; line-height: 1.5;">
+                        You can download this resource by logging into your Profile Dashboard.
+                    </p>
+                    <a href="https://www.techzdada.in/resources" style="display: inline-block; padding: 12px 24px; background-color: #f68014; color: white; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 14px;">Go back to Resources</a>
+                </div>
+                <div style="background: #f9fafb; padding: 16px 24px; text-align: center; border-top: 1px solid #e5e7eb;">
+                    <p style="color: #9ca3af; margin: 0; font-size: 11px;">© College Pe Charcha • Official Platform</p>
+                </div>
+            </div>
+        `
+    };
+
+    await transporter.sendMail(mailOptions);
+};
+
+module.exports = { sendOtpEmail, sendResetOtpEmail, sendPurchaseEmail };

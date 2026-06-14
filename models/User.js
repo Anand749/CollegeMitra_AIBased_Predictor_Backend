@@ -21,6 +21,10 @@ const userSchema = new mongoose.Schema({
         required: true,
         trim: true
     },
+    purchasedResources: [{
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Resource'
+    }],
     createdAt: {
         type: Date,
         default: Date.now
