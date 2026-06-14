@@ -55,13 +55,13 @@ exports.createOrder = async (req, res) => {
             });
         }
 
-        const baseAmount = resource.price || 0;
+        const baseAmount = Number(resource.price) || 0;
         const serviceFee = 0;
         const totalAmount = baseAmount + serviceFee;
 
         // Create Razorpay Order
         const options = {
-            amount: totalAmount * 100, // in paise
+            amount: Math.round(totalAmount * 100), // in paise, strictly integer
             currency: 'INR',
             receipt: `rcpt_${userId.toString().slice(-4)}_${Date.now()}`
         };
