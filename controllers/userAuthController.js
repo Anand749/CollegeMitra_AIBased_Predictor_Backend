@@ -1,18 +1,19 @@
-const admin = require('firebase-admin');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const Otp = require('../models/Otp');
 const { sendOtpEmail } = require('../utils/emailService');
 
-// Initialize Firebase Admin SDK
-if (!admin.apps.length) {
-    admin.initializeApp({
-        credential: admin.credential.cert({
-            projectId: process.env.FIREBASE_PROJECT_ID,
-            clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-            privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n')
-        })
-    });
-}
+/**
+ * Helper: Generate a signed JWT token
+ */
+const generateToken = (user) => {
+    return jwt.sign(
+        { userId: user._id, email: user.email },
+        process.env.JWT_SECRET,
+        { expiresIn: '7d' }
+    );
+};
 
 /**
  * Generate 6-digit OTP
@@ -105,32 +106,20 @@ exports.registerUser = async (req, res) => {
             return res.status(400).json({ success: false, message: 'Email already registered. Please login.' });
         }
 
-        // Create Firebase user via Admin SDK
-        let firebaseUser;
-        try {
-            firebaseUser = await admin.auth().createUser({
-                email,
-                password,
-                displayName: username.trim(),
-                emailVerified: true // Already verified via OTP
-            });
-        } catch (firebaseError) {
-            if (firebaseError.code === 'auth/email-already-exists') {
-                return res.status(400).json({ success: false, message: 'Email already registered in Firebase. Please login.' });
-            }
-            throw firebaseError;
-        }
+        // Hash password with bcrypt
+        const salt = await bcrypt.genSalt(10);
+        const hashedPassword = await bcrypt.hash(password, salt);
 
-        // Create user in MongoDB
+        // Create user in MongoDB with hashed password
         const user = await User.create({
-            uid: firebaseUser.uid,
             email,
+            password: hashedPassword,
             username: username.trim(),
             phone: phone.trim()
         });
 
-        // Generate custom token for auto-login
-        const customToken = await admin.auth().createCustomToken(firebaseUser.uid);
+        // Generate JWT token for auto-login
+        const token = generateToken(user);
 
         console.log(`✅ New user registered: ${user.username} (${user.email})`);
 
@@ -138,14 +127,14 @@ exports.registerUser = async (req, res) => {
             success: true,
             message: 'Registration successful',
             data: {
-                uid: user.uid,
+                _id: user._id,
                 email: user.email,
                 username: user.username,
                 phone: user.phone,
                 createdAt: user.createdAt,
                 updatedAt: user.updatedAt
             },
-            customToken
+            token
         });
 
     } catch (error) {
@@ -161,34 +150,18 @@ exports.registerUser = async (req, res) => {
 /**
  * @desc    Login existing user
  * @route   POST /api/auth/login
- * @body    { idToken: string }
+ * @body    { email: string, password: string }
  */
 exports.loginUser = async (req, res) => {
     try {
-        const { idToken } = req.body;
+        const { email, password } = req.body;
 
-        if (!idToken) {
-            return res.status(400).json({ success: false, message: 'Firebase ID token is required' });
+        if (!email || !password) {
+            return res.status(400).json({ success: false, message: 'Email and password are required' });
         }
 
-        // Verify Firebase ID token
-        let decodedToken;
-        try {
-            decodedToken = await admin.auth().verifyIdToken(idToken);
-        } catch (firebaseError) {
-            console.error('Firebase token verification failed:', firebaseError.message);
-            return res.status(401).json({ success: false, message: 'Invalid or expired token' });
-        }
-
-        const { uid } = decodedToken;
-
-        // Find user in database
-        const user = await User.findOneAndUpdate(
-            { uid },
-            { updatedAt: Date.now() },
-            { new: true }
-        );
-
+        // Find user by email
+        const user = await User.findOne({ email });
         if (!user) {
             return res.status(404).json({
                 success: false,
@@ -196,19 +169,36 @@ exports.loginUser = async (req, res) => {
             });
         }
 
+        // Compare submitted password with stored bcrypt hash
+        const isMatch = await bcrypt.compare(password, user.password);
+        if (!isMatch) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid email or password.'
+            });
+        }
+
+        // Update last login timestamp
+        user.updatedAt = Date.now();
+        await user.save();
+
+        // Generate JWT token
+        const token = generateToken(user);
+
         console.log(`✅ User logged in: ${user.username} (${user.email})`);
 
         res.status(200).json({
             success: true,
             message: 'Login successful',
             data: {
-                uid: user.uid,
+                _id: user._id,
                 email: user.email,
                 username: user.username,
                 phone: user.phone,
                 createdAt: user.createdAt,
                 updatedAt: user.updatedAt
-            }
+            },
+            token
         });
 
     } catch (error) {
@@ -294,21 +284,34 @@ exports.resetPassword = async (req, res) => {
         // OTP is valid — delete it
         await Otp.deleteMany({ email });
 
-        // Update password in Firebase
-        const existingUser = await User.findOne({ email });
-        if (!existingUser) {
+        // Find user and update password in MongoDB
+        const user = await User.findOne({ email });
+        if (!user) {
              return res.status(404).json({ success: false, message: 'Account not found' });
         }
 
-        await admin.auth().updateUser(existingUser.uid, {
-            password: newPassword
-        });
+        // Hash the new password
+        const salt = await bcrypt.genSalt(10);
+        user.password = await bcrypt.hash(newPassword, salt);
+        await user.save();
+
+        // Generate token for auto-login after reset
+        const token = generateToken(user);
 
         console.log(`✅ Password reset successful for: ${email}`);
 
         res.status(200).json({
             success: true,
-            message: 'Password has been reset successfully. You can now login.'
+            message: 'Password has been reset successfully. You can now login.',
+            data: {
+                _id: user._id,
+                email: user.email,
+                username: user.username,
+                phone: user.phone,
+                createdAt: user.createdAt,
+                updatedAt: user.updatedAt
+            },
+            token
         });
 
     } catch (error) {

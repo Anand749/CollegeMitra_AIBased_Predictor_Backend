@@ -1,4 +1,4 @@
-const admin = require('firebase-admin');
+const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 
 exports.verifyToken = async (req, res, next) => {
@@ -10,37 +10,30 @@ exports.verifyToken = async (req, res, next) => {
 
         const token = authHeader.split(' ')[1];
 
-        // Ensure Firebase Admin is initialized
-        if (!admin.apps.length) {
-            admin.initializeApp({
-                credential: admin.credential.cert({
-                    projectId: process.env.FIREBASE_PROJECT_ID,
-                    clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-                    privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n')
-                })
-            });
-        }
+        // Verify JWT using our own secret
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-        const decodedToken = await admin.auth().verifyIdToken(token);
-        
         // Find corresponding user in our MongoDB
-        // Since login/register sets the firebase uid in our MongoDB as 'uid' or by email
-        // We can query by the decoded email
-        const user = await User.findOne({ email: decodedToken.email });
+        const user = await User.findById(decoded.userId);
         if (!user) {
-             return res.status(404).json({ success: false, message: 'User not found in local database' });
+             return res.status(404).json({ success: false, message: 'User not found in database' });
         }
 
         req.user = {
-            firebaseUid: decodedToken.uid,
-            email: decodedToken.email,
-            userId: user._id // The Mongoose ObjectId needed for Purchase schema
+            userId: user._id,
+            email: user.email
         };
         
         next();
 
     } catch (error) {
-        console.error('Verify Token Error:', error);
+        console.error('Verify Token Error:', error.message);
+        if (error.name === 'TokenExpiredError') {
+            return res.status(401).json({ success: false, message: 'Token has expired. Please login again.' });
+        }
+        if (error.name === 'JsonWebTokenError') {
+            return res.status(401).json({ success: false, message: 'Invalid token.' });
+        }
         res.status(401).json({ success: false, message: 'Token is invalid or expired', error: error.message });
     }
 };
