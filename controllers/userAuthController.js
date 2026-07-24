@@ -169,13 +169,40 @@ exports.loginUser = async (req, res) => {
             });
         }
 
-        // Compare submitted password with stored bcrypt hash
-        const isMatch = await bcrypt.compare(password, user.password);
-        if (!isMatch) {
-            return res.status(400).json({
-                success: false,
-                message: 'Invalid email or password.'
+        // Check if user has a password (legacy Firebase users won't)
+        if (!user.password) {
+            console.log(`⚠️ Legacy user login detected: ${email}. Verifying with Firebase REST API...`);
+            
+            // Verify password against Firebase REST API
+            const firebaseVerifyResponse = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${process.env.FIREBASE_WEB_API_KEY}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, password, returnSecureToken: true })
             });
+
+            const firebaseData = await firebaseVerifyResponse.json();
+
+            if (!firebaseVerifyResponse.ok) {
+                console.error('Firebase verification failed:', firebaseData.error?.message);
+                return res.status(400).json({
+                    success: false,
+                    message: 'Invalid email or password.'
+                });
+            }
+
+            // Firebase verified the password! Now we migrate them to bcrypt
+            const salt = await bcrypt.genSalt(10);
+            user.password = await bcrypt.hash(password, salt);
+            console.log(`✅ Legacy user ${email} successfully migrated to bcrypt!`);
+        } else {
+            // Standard bcrypt verification for migrated/new users
+            const isMatch = await bcrypt.compare(password, user.password);
+            if (!isMatch) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Invalid email or password.'
+                });
+            }
         }
 
         // Update last login timestamp
