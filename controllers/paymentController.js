@@ -56,8 +56,8 @@ exports.createOrder = async (req, res) => {
         }
 
         const baseAmount = Number(resource.price) || 0;
-        const serviceFee = 0;
-        const totalAmount = baseAmount + serviceFee;
+        const serviceFee = Math.round(baseAmount * 0.02 * 100) / 100; // 2% of price, rounded to 2 decimal places
+        const totalAmount = Math.round((baseAmount + serviceFee) * 100) / 100;
 
         // Create Razorpay Order
         const options = {
