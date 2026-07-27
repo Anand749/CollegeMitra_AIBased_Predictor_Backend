@@ -18,9 +18,9 @@ const app = express();
 // ── Global Rate Limiter ──
 // 100 requests per 15 minutes per IP across all API routes
 const globalLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
+    windowMs: 10 * 60 * 1000,
     max: 100,
-    message: { success: false, message: 'Too many requests from this IP, please try again after 15 minutes' },
+    message: { success: false, message: 'Too many requests from this IP, please try again after 10 minutes' },
     standardHeaders: true,
     legacyHeaders: false,
 });
@@ -28,9 +28,9 @@ const globalLimiter = rateLimit({
 // ── Stricter Payment Rate Limiter ──
 // 10 requests per 15 minutes per IP for payment routes
 const paymentLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 10,
-    message: { success: false, message: 'Too many payment requests. Please try again after 15 minutes.' },
+    windowMs: 10 * 60 * 1000,
+    max: 20,
+    message: { success: false, message: 'Too many payment requests. Please try again after 10 minutes.' },
     standardHeaders: true,
     legacyHeaders: false,
 });
