@@ -15,6 +15,9 @@ connectDB();
 
 const app = express();
 
+// Trust the first proxy (e.g., Vercel) so rate limiters use the real client IP instead of the proxy's IP
+app.set('trust proxy', 1);
+
 // ── Global Rate Limiter ──
 // 100 requests per 15 minutes per IP across all API routes
 const globalLimiter = rateLimit({
