@@ -43,7 +43,17 @@ app.use(cors({
     origin: ['http://localhost:5173', 'http://localhost:5174', process.env.FRONTEND_URL, 'https://techzdada.in', 'https://www.techzdada.in'].filter(Boolean),
     credentials: true
 }));
-app.use(express.json());
+
+// ── Body Parsing ──
+// The Razorpay webhook MUST receive the raw body buffer to verify the HMAC signature.
+// express.json() re-serialises the body and the key order may differ from the original
+// bytes that Razorpay signed → signature mismatch → webhook always returns 400.
+// Solution: skip global JSON parsing for the webhook path; the route itself applies
+// express.raw() so we get the exact bytes Razorpay sent.
+app.use((req, res, next) => {
+    if (req.path === '/api/payment/webhook') return next();
+    express.json()(req, res, next);
+});
 
 // Apply global rate limiter to all /api routes
 app.use('/api', globalLimiter);

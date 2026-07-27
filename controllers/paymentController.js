@@ -108,38 +108,8 @@ exports.verifyPayment = async (req, res) => {
             .update(sign.toString())
             .digest("hex");
 
-        if (razorpay_signature === expectedSign) {
-            // Signature is valid, update purchase status
-            const purchase = await Purchase.findOne({ orderId: razorpay_order_id });
-
-            if (!purchase) {
-                return res.status(404).json({ success: false, message: 'Purchase record not found' });
-            }
-
-            if (purchase.status === 'success') {
-                return res.status(200).json({ success: true, message: 'Payment already verified' });
-            }
-
-            purchase.paymentId = razorpay_payment_id;
-            purchase.status = 'success';
-            await purchase.save();
-
-            // Grant access to user
-            const user = await User.findByIdAndUpdate(userId, {
-                $addToSet: { purchasedResources: purchase.resourceId }
-            }, { new: true });
-
-            // Fetch the resource name to send in email
-            const resource = await Resource.findById(purchase.resourceId);
-            
-            // Send the wonderful receipt email silently in the background
-            sendPurchaseEmail(user.email, resource.name, purchase.totalAmount, purchase.paymentId).catch(err => {
-                console.error("Failed to send purchase email:", err);
-            });
-
-            return res.status(200).json({ success: true, message: 'Payment verified successfully' });
-        } else {
-            // Invalid signature
+        if (razorpay_signature !== expectedSign) {
+            // Invalid signature — mark purchase as failed
             const purchase = await Purchase.findOne({ orderId: razorpay_order_id });
             if (purchase) {
                 purchase.status = 'failed';
@@ -147,57 +117,103 @@ exports.verifyPayment = async (req, res) => {
             }
             return res.status(400).json({ success: false, message: 'Invalid payment signature' });
         }
+
+        // ── Signature is valid ──
+        const purchase = await Purchase.findOne({ orderId: razorpay_order_id });
+
+        if (!purchase) {
+            return res.status(404).json({ success: false, message: 'Purchase record not found' });
+        }
+
+        if (purchase.status === 'success') {
+            return res.status(200).json({ success: true, message: 'Payment already verified' });
+        }
+
+        // Atomically update purchase status (single write)
+        purchase.paymentId = razorpay_payment_id;
+        purchase.status = 'success';
+
+        // Run all remaining DB operations in parallel to stay well within
+        // Vercel's 10-second free-plan timeout
+        const [, user, resource] = await Promise.all([
+            purchase.save(),
+            User.findByIdAndUpdate(userId, {
+                $addToSet: { purchasedResources: purchase.resourceId }
+            }, { new: true }),
+            Resource.findById(purchase.resourceId)
+        ]);
+
+        // Send receipt email silently in the background (never blocks the response)
+        sendPurchaseEmail(user.email, resource.name, purchase.totalAmount, purchase.paymentId).catch(err => {
+            console.error("Failed to send purchase email:", err);
+        });
+
+        return res.status(200).json({ success: true, message: 'Payment verified successfully' });
+
     } catch (error) {
         console.error('Verify Payment Error:', error);
         res.status(500).json({ success: false, message: 'Payment verification failed', error: error.message });
     }
 };
 
+
 exports.webhook = async (req, res) => {
     try {
         const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
         const signature = req.headers['x-razorpay-signature'];
 
-        // Use raw body for webhook verification if Express is parsing it differently, but for standard stringified:
+        // req.body is a raw Buffer here (express.raw middleware is applied on this route).
+        // Razorpay signs the raw bytes of the payload, so we must pass the Buffer directly
+        // to createHmac — NOT JSON.stringify(req.body), which can produce a different byte
+        // sequence than what Razorpay signed.
         const expectedSignature = crypto.createHmac('sha256', secret)
-            .update(JSON.stringify(req.body))
+            .update(req.body)                   // raw Buffer — exact bytes Razorpay signed
             .digest('hex');
 
-        if (expectedSignature === signature) {
-            // Check event type
-            if (req.body.event === 'payment.captured') {
-                const payment = req.body.payload.payment.entity;
-                const orderId = payment.order_id;
+        if (expectedSignature !== signature) {
+            console.warn('⚠️ Webhook: invalid signature received');
+            return res.status(400).send('Invalid signature');
+        }
 
-                // Fetch purchase by orderId
-                const purchase = await Purchase.findOne({ orderId });
+        // Signature is valid — parse body now
+        const parsedBody = JSON.parse(req.body.toString());
 
-                if (purchase && purchase.status !== 'success') {
-                    purchase.status = 'success';
-                    purchase.paymentId = payment.id;
-                    await purchase.save();
+        if (parsedBody.event === 'payment.captured') {
+            const payment = parsedBody.payload.payment.entity;
+            const orderId = payment.order_id;
 
-                    // Grant access
-                    const user = await User.findByIdAndUpdate(purchase.userId, {
+            // Fetch purchase by orderId
+            const purchase = await Purchase.findOne({ orderId });
+
+            if (purchase && purchase.status !== 'success') {
+                // Run all writes in parallel to reduce execution time
+                const [, user, resource] = await Promise.all([
+                    Purchase.findOneAndUpdate(
+                        { orderId, status: { $ne: 'success' } },
+                        { status: 'success', paymentId: payment.id },
+                        { new: true }
+                    ),
+                    User.findByIdAndUpdate(purchase.userId, {
                         $addToSet: { purchasedResources: purchase.resourceId }
-                    }, { new: true });
-                    
-                    const resource = await Resource.findById(purchase.resourceId);
-                    
-                    sendPurchaseEmail(user.email, resource.name, purchase.totalAmount, purchase.paymentId).catch(err => {
-                         console.error("Failed to send purchase email via webhook:", err);
+                    }, { new: true }),
+                    Resource.findById(purchase.resourceId)
+                ]);
+
+                if (user && resource) {
+                    sendPurchaseEmail(user.email, resource.name, purchase.totalAmount, payment.id).catch(err => {
+                        console.error('Failed to send purchase email via webhook:', err);
                     });
                 }
             }
-            res.status(200).send('Webhook verified');
-        } else {
-            res.status(400).send('Invalid signature');
         }
+
+        res.status(200).send('Webhook verified');
     } catch (error) {
         console.error('Webhook Error:', error);
         res.status(500).send('Webhook failed');
     }
 };
+
 
 exports.getMyPurchases = async (req, res) => {
     try {
